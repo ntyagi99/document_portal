@@ -1,4 +1,6 @@
+# Workflow Name - This names the workflow for visibility in GitHub Actions.
 name: CI/CD to ECS Fargate
+# Trigger- This workflow is triggered after another workflow named "Run Unit Tests" # completes. It ensures deployment only happens after tests pass.
 on:
   workflow_run:
     workflows: ["Run Unit Tests"]   # Match the name in your ci.yaml
