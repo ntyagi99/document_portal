@@ -1,3 +1,11 @@
+#Summary
+#This workflow:
+
+#Waits for unit tests to pass
+#Builds and pushes a Docker image to ECR
+#Updates ECS task definition with the new image
+#Deploys the updated task to ECS Fargate
+
 # Workflow Name - This names the workflow for visibility in GitHub Actions.
 name: CI/CD to ECS Fargate
 # Trigger- This workflow is triggered after another workflow named "Run Unit Tests" # completes. It ensures deployment only happens after tests pass.
@@ -6,6 +14,13 @@ on:
     workflows: ["Run Unit Tests"]   # Match the name in your ci.yaml
     types:
       - completed
+# These variables define AWS and ECS settings used throughout the workflow:
+
+#ECR_REPOSITORY: Docker image repository
+#ECS_SERVICE / CLUSTER: ECS service and cluster names
+#TASK_DEFINITION: Path to the ECS task definition template
+#CONTAINER_NAME: Name of the container in the task
+
 env:
   AWS_REGION: ap-southeast-2
   ECR_REPOSITORY: documentportalliveclass
@@ -13,11 +28,12 @@ env:
   ECS_CLUSTER: document-portal-cluster
   ECS_TASK_DEFINITION: .github/workflows/task_definition.json
   CONTAINER_NAME: document-portal-container
-
+# Grants access to GitHub's OIDC token and repository contents for secure AWS authentication.
 permissions:
   id-token: write
   contents: read
-
+# Job 1: Status Check
+# This job runs only if the unit tests passed and the branch is main. It prints a #confirmation message.
 jobs:
   check-status:
     runs-on: ubuntu-latest
@@ -25,6 +41,16 @@ jobs:
     steps:
       - name: CI passed on main branch
         run: echo "CI passed on main branch, proceeding to build and deploy."
+# Job 2: Build & Push Docker Image
+#Runs only if check-status succeeds.
+
+#Steps:
+#Checkout code
+#Configure AWS credentials using secrets
+#Login to ECR
+#Build Docker image and tag it with the current commit SHA
+#Push image to ECR
+#Expose image URI as output for use in the next job
 
   # -------------------------------
   # 1. Build & Push Docker Image
@@ -61,7 +87,16 @@ jobs:
           docker build -t $IMAGE_URI .
           docker push $IMAGE_URI
           echo "image=$IMAGE_URI" >> $GITHUB_OUTPUT
+#Job 3: Deploy to ECS Fargate
+#Runs after the image is built and pushed.
 
+#Steps:
+#Checkout code
+#Configure AWS credentials
+#Render ECS task definition with the new image URI
+#Print the rendered task definition
+#Deploy to ECS using the updated task definition
+#Confirm deployment
   # -------------------------------
   # 2. Deploy to ECS
   # -------------------------------
