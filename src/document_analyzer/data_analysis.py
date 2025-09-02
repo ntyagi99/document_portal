@@ -1,3 +1,38 @@
+"""
+This module defines the DocumentAnalyzer class for automated document analysis using a language model (LLM).
+
+Overview:
+- Loads a pre-trained LLM via ModelLoader.
+- Uses prompts and output parsers to extract structured metadata and summaries from document text.
+- Employs robust error handling and logging for transparency.
+
+Key Components:
+1. Imports:
+   - Standard libraries (os, sys) for system operations.
+   - Custom modules for model loading, logging, exception handling, and data models.
+   - LangChain output parsers for converting LLM output to structured JSON.
+   - PROMPT_REGISTRY for prompt templates.
+
+2. DocumentAnalyzer Class:
+   - Initializes model, parsers, and prompt for analysis.
+   - All actions are logged.
+   - Handles initialization errors via custom exceptions.
+
+3. analyze_document Method:
+   - Chains prompt, LLM, and fixing parser for robust metadata extraction.
+   - Invokes the chain with formatting instructions and document text.
+   - Returns parsed metadata as a dictionary.
+   - Errors are logged and raised as DocumentPortalException.
+
+Usage Example:
+    analyzer = DocumentAnalyzer()
+    metadata = analyzer.analyze_document(document_text)
+
+Extensibility:
+- Easily adaptable for different prompts, models, or output structures.
+
+"""
+
 import os
 import sys
 from utils.model_loader import ModelLoader
@@ -32,7 +67,6 @@ class DocumentAnalyzer:
             raise DocumentPortalException("Error in DocumentAnalyzer initialization", sys)
         
         
-    
     def analyze_document(self, document_text:str)-> dict:
         """
         Analyze a document's text and extract structured metadata & summary.
@@ -54,5 +88,3 @@ class DocumentAnalyzer:
         except Exception as e:
             log.error("Metadata analysis failed", error=str(e))
             raise DocumentPortalException("Metadata extraction failed",sys)
-        
-    
