@@ -1,3 +1,69 @@
+"""
+================================================================================
+Document Ingestion & Management Module
+================================================================================
+
+This module provides tools for ingesting, saving, splitting, indexing, and comparing documents (primarily PDFs) using FAISS and LangChain. It is designed for session-based workflows, supporting isolated analysis and retrieval per user/session.
+
+--------------------------------------------------------------------------------
+Key Components:
+
+1. FaissManager:
+   - Manages FAISS vector index for document embeddings.
+   - Handles index creation/loading, metadata tracking and deduplication, and persistent storage.
+   - Uses LangChain embedding models for vectorization.
+
+2. ChatIngestor:
+   - Handles file upload, document splitting, and FAISS indexing for retrieval.
+   - Supports session-based directory structure for isolation.
+   - Returns a retriever object for semantic similarity search.
+
+3. DocHandler:
+   - Manages saving and reading of PDFs for document analysis in a session.
+   - Reads PDFs page-wise using PyMuPDF.
+
+4. DocumentComparator:
+   - Saves, reads, and combines PDFs for comparison with session-based versioning.
+   - Handles upload of reference/actual files, reading, and concatenation of documents.
+   - Provides session cleanup to remove old data.
+
+--------------------------------------------------------------------------------
+Workflow:
+
+- Uploaded documents are saved to session directories.
+- Documents are split into chunks for more efficient embedding and search.
+- Chunks are embedded and indexed with FAISS, de-duplicated by fingerprint.
+- Retrieval is performed via a retriever object for similarity search.
+- PDFs can be analyzed or compared page-wise, session-isolated.
+- Old sessions can be deleted to manage disk usage.
+
+--------------------------------------------------------------------------------
+Session Management:
+
+- All classes support session-based directories, isolating state per user or analysis run.
+- Session IDs are generated automatically if not provided.
+
+--------------------------------------------------------------------------------
+Tech Stack:
+
+- LangChain: Document schema, text splitting, vector store abstraction.
+- FAISS: Efficient similarity search over embedded text.
+- PyMuPDF (fitz): PDF reading and text extraction.
+- Custom logging and exceptions are used for centralized error reporting.
+
+--------------------------------------------------------------------------------
+Error Handling:
+
+- Critical methods use try/except, log errors, and raise custom exceptions for robustness.
+
+--------------------------------------------------------------------------------
+Usage:
+
+Typical usage involves uploading documents, chunking and indexing them, retrieving similar passages, analyzing PDFs, or comparing multiple documents, all managed within isolated user sessions.
+
+================================================================================
+"""
+
 from __future__ import annotations
 import os
 import sys
@@ -21,6 +87,10 @@ SUPPORTED_EXTENSIONS = {".pdf", ".docx", ".txt"}
 
 # FAISS Manager (load-or-create)
 class FaissManager:
+    """
+    Handles creation, loading, and updating of FAISS vector indexes for document embeddings.
+    Provides de-duplication (by fingerprint), metadata tracking, and persistent storage.
+    """
     def __init__(self, index_dir: Path, model_loader: Optional[ModelLoader] = None):
         self.index_dir = Path(index_dir)
         self.index_dir.mkdir(parents=True, exist_ok=True)
@@ -44,6 +114,10 @@ class FaissManager:
     
     @staticmethod
     def _fingerprint(text: str, md: Dict[str, Any]) -> str:
+        """
+        Creates a unique fingerprint for each document chunk, 
+        using metadata (source, row_id) or the hash of the text.
+        """
         src = md.get("source") or md.get("file_path")
         rid = md.get("row_id")
         if src is not None:
@@ -51,18 +125,22 @@ class FaissManager:
         return hashlib.sha256(text.encode("utf-8")).hexdigest()
     
     def _save_meta(self):
+        """
+        Saves the metadata dictionary to disk.
+        """
         self.meta_path.write_text(json.dumps(self._meta, ensure_ascii=False, indent=2), encoding="utf-8")
         
         
     def add_documents(self,docs: List[Document]):
-        
+        """
+        Adds new document chunks to the FAISS index, skipping duplicates using fingerprints.
+        """
         if self.vs is None:
             raise RuntimeError("Call load_or_create() before add_documents_idempotent().")
         
         new_docs: List[Document] = []
         
         for d in docs:
-            
             key = self._fingerprint(d.page_content, d.metadata or {})
             if key in self._meta["rows"]:
                 continue
@@ -76,7 +154,9 @@ class FaissManager:
         return len(new_docs)
     
     def load_or_create(self,texts:Optional[List[str]]=None, metadatas: Optional[List[dict]] = None):
-        ## if we running first time then it will not go in this block
+        """
+        Loads an existing FAISS index or creates a new one from provided texts and metadata.
+        """
         if self._exists():
             self.vs = FAISS.load_local(
                 str(self.index_dir),
@@ -84,7 +164,6 @@ class FaissManager:
                 allow_dangerous_deserialization=True,
             )
             return self.vs
-        
         
         if not texts:
             raise DocumentPortalException("No existing FAISS index and no data to create one", sys)
@@ -94,6 +173,10 @@ class FaissManager:
         
         
 class ChatIngestor:
+    """
+    Handles file upload, document splitting, and indexing for retrieval.
+    Manages session-based directories for isolation.
+    """
     def __init__( self,
         temp_base: str = "data",
         faiss_base: str = "faiss_index",
@@ -123,6 +206,9 @@ class ChatIngestor:
             
         
     def _resolve_dir(self, base: Path):
+        """
+        Ensures existence of session directory under the base path.
+        """
         if self.use_session:
             d = base / self.session_id # e.g. "faiss_index/abc123"
             d.mkdir(parents=True, exist_ok=True) # creates dir if not exists
@@ -130,6 +216,9 @@ class ChatIngestor:
         return base # fallback: "faiss_index/"
         
     def _split(self, docs: List[Document], chunk_size=1000, chunk_overlap=200) -> List[Document]:
+        """
+        Splits documents into smaller chunks for embedding/indexing using a recursive text splitter.
+        """
         splitter = RecursiveCharacterTextSplitter(chunk_size=chunk_size, chunk_overlap=chunk_overlap)
         chunks = splitter.split_documents(docs)
         log.info("Documents split", chunks=len(chunks), chunk_size=chunk_size, overlap=chunk_overlap)
@@ -141,6 +230,15 @@ class ChatIngestor:
         chunk_size: int = 1000,
         chunk_overlap: int = 200,
         k: int = 5,):
+        """
+        Main ingestion pipeline:
+        1. Saves uploaded files.
+        2. Loads documents from saved files.
+        3. Splits documents into chunks.
+        4. Initializes FAISS manager and index.
+        5. Adds chunks to FAISS index.
+        6. Returns a retriever object for similarity search.
+        """
         try:
             paths = save_uploaded_files(uploaded_files, self.temp_dir)
             docs = load_documents(paths)
@@ -169,12 +267,10 @@ class ChatIngestor:
             log.error("Failed to build retriever", error=str(e))
             raise DocumentPortalException("Failed to build retriever", e) from e
 
-            
-        
-            
 class DocHandler:
     """
     PDF save + read (page-wise) for analysis.
+    Operates in a session directory per analysis task.
     """
     def __init__(self, data_dir: Optional[str] = None, session_id: Optional[str] = None):
         self.data_dir = data_dir or os.getenv("DATA_STORAGE_PATH", os.path.join(os.getcwd(), "data", "document_analysis"))
@@ -184,6 +280,9 @@ class DocHandler:
         log.info("DocHandler initialized", session_id=self.session_id, session_path=self.session_path)
 
     def save_pdf(self, uploaded_file) -> str:
+        """
+        Saves an uploaded PDF to session directory, checks extension.
+        """
         try:
             filename = os.path.basename(uploaded_file.name)
             if not filename.lower().endswith(".pdf"):
@@ -201,6 +300,9 @@ class DocHandler:
             raise DocumentPortalException(f"Failed to save PDF: {str(e)}", e) from e
 
     def read_pdf(self, pdf_path: str) -> str:
+        """
+        Reads a PDF file page-wise using PyMuPDF, returns concatenated text.
+        """
         try:
             text_chunks = []
             with fitz.open(pdf_path) as doc:
@@ -213,9 +315,12 @@ class DocHandler:
         except Exception as e:
             log.error("Failed to read PDF", error=str(e), pdf_path=pdf_path, session_id=self.session_id)
             raise DocumentPortalException(f"Could not process PDF: {pdf_path}", e) from e
+
 class DocumentComparator:
     """
     Save, read & combine PDFs for comparison with session-based versioning.
+    Handles upload, reading, and concatenation of multiple PDFs.
+    Provides cleanup for old sessions.
     """
     def __init__(self, base_dir: str = "data/document_compare", session_id: Optional[str] = None):
         self.base_dir = Path(base_dir)
@@ -225,6 +330,9 @@ class DocumentComparator:
         log.info("DocumentComparator initialized", session_path=str(self.session_path))
 
     def save_uploaded_files(self, reference_file, actual_file):
+        """
+        Saves two uploaded PDF files to the session directory.
+        """
         try:
             ref_path = self.session_path / reference_file.name
             act_path = self.session_path / actual_file.name
@@ -243,6 +351,9 @@ class DocumentComparator:
             raise DocumentPortalException("Error saving files", e) from e
 
     def read_pdf(self, pdf_path: Path) -> str:
+        """
+        Reads a PDF file, checks for encryption, and returns concatenated text by page.
+        """
         try:
             with fitz.open(pdf_path) as doc:
                 if doc.is_encrypted:
@@ -260,6 +371,9 @@ class DocumentComparator:
             raise DocumentPortalException("Error reading PDF", e) from e
 
     def combine_documents(self) -> str:
+        """
+        Reads all PDFs in the session directory, concatenates their text for comparison.
+        """
         try:
             doc_parts = []
             for file in sorted(self.session_path.iterdir()):
@@ -274,6 +388,9 @@ class DocumentComparator:
             raise DocumentPortalException("Error combining documents", e) from e
 
     def clean_old_sessions(self, keep_latest: int = 3):
+        """
+        Deletes old session directories, keeping only the latest N (default 3).
+        """
         try:
             sessions = sorted([f for f in self.base_dir.iterdir() if f.is_dir()], reverse=True)
             for folder in sessions[keep_latest:]:
@@ -282,4 +399,3 @@ class DocumentComparator:
         except Exception as e:
             log.error("Error cleaning old sessions", error=str(e))
             raise DocumentPortalException("Error cleaning old sessions", e) from e
-
