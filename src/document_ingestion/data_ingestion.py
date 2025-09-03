@@ -134,23 +134,40 @@ class FaissManager:
     def add_documents(self,docs: List[Document]):
         """
         Adds new document chunks to the FAISS index, skipping duplicates using fingerprints.
+        self.vs is probably the FAISS vector store.
+        If it's not initialized, the method raises an error.
         """
         if self.vs is None:
             raise RuntimeError("Call load_or_create() before add_documents_idempotent().")
-        
+        """   
+        Prepare a list for new documents, This will hold only the documents that are not duplicates.
+        """
         new_docs: List[Document] = []
-        
+        """
+        3. Loop through each document
+        _fingerprint() generates a unique key based on the document's content and metadata.
+       If the fingerprint already exists in self._meta["rows"], it's a duplicate and skipped.
+        Otherwise, it's added to new_docs and marked in the metadata.
+        """
         for d in docs:
             key = self._fingerprint(d.page_content, d.metadata or {})
             if key in self._meta["rows"]:
                 continue
             self._meta["rows"][key] = True
             new_docs.append(d)
-            
+        """   
+        4. Add new documents to the index
+       Adds only the non-duplicate documents to the FAISS index.
+       Saves the updated index locally.
+       Updates the metadata store.
+       """
         if new_docs:
             self.vs.add_documents(new_docs)
             self.vs.save_local(str(self.index_dir))
             self._save_meta()
+        """   
+        5. Return the count of new documents added
+        """
         return len(new_docs)
     
     def load_or_create(self,texts:Optional[List[str]]=None, metadatas: Optional[List[dict]] = None):
